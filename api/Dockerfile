@@ -31,5 +31,5 @@ ENV PORT=8080
 
 EXPOSE 8080
 
-# Run with uvicorn
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT"]
+# Run with uvicorn (--no-access-log since we use structured logging)
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT --no-access-log"]
