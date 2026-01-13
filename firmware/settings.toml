@@ -1,0 +1,27 @@
+# CircuitPython settings file
+# Rename this file to settings.toml after filling in your values
+# Place in the root of your CIRCUITPY drive
+
+# WiFi credentials
+CIRCUITPY_WIFI_SSID = "your_wifi_name"
+CIRCUITPY_WIFI_PASSWORD = "your_wifi_password"
+
+# Adafruit IO (for time sync) - https://io.adafruit.com
+ADAFRUIT_AIO_USERNAME = "your_adafruit_username"
+ADAFRUIT_AIO_KEY = "your_adafruit_io_key"
+
+# Timezone (http://worldtimeapi.org/timezones)
+CIRCUITPY_WEB_API_TIMEZONE = "America/New_York"
+
+# Display settings
+DEFAULT_DIRECTION = "North"  # "North" or "South"
+
+# API settings
+TRANSIT_URL = "https://mta-arrivals-api.fly.dev/api/mta/arrivals"
+API_KEY = "your-api-key"
+STATION_IDS = "A32N,A32S"
+SUBWAY_LINES = "A,C,E"
+
+# Location for weather/AQI
+LATITUDE = "40.7326"
+LONGITUDE = "-74.0003"

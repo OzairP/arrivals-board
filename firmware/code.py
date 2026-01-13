@@ -12,7 +12,13 @@ from adafruit_matrixportal.matrix import Matrix
 import adafruit_imageload as imageload
 import supervisor
 import gc
-import wifi
+
+# Platform detection for WiFi connection check
+try:
+    import wifi
+    _USE_NATIVE_WIFI = True
+except ImportError:
+    _USE_NATIVE_WIFI = False
 
 DEBUG = False
 bullet_index = {"A" : 0,
@@ -49,20 +55,72 @@ bullet_index = {"A" : 0,
 # release any currently configured displays
 displayio.release_displays()
 
-# Get wifi details and more from a secrets.py file
-try:
-    from secrets import secrets
-except ImportError:
-    print("WiFi secrets are kept in secrets.py, please add them there!")
-    raise
-print("Time will be set for {}".format(secrets["timezone"]))
+# Load settings from settings.toml (CircuitPython 8.0+)
+import os
+
+# Create secrets dict for Network class compatibility
+secrets = {
+    "ssid": os.getenv("CIRCUITPY_WIFI_SSID"),
+    "password": os.getenv("CIRCUITPY_WIFI_PASSWORD"),
+    "aio_username": os.getenv("ADAFRUIT_AIO_USERNAME"),
+    "aio_key": os.getenv("ADAFRUIT_AIO_KEY"),
+    "timezone": os.getenv("CIRCUITPY_WEB_API_TIMEZONE", "America/New_York"),
+}
+
+# App settings
+DEFAULT_DIRECTION = os.getenv("DEFAULT_DIRECTION", "North")
+TRANSIT_URL = os.getenv("TRANSIT_URL")
+API_KEY = os.getenv("API_KEY")
+STATION_IDS = os.getenv("STATION_IDS")
+SUBWAY_LINES = os.getenv("SUBWAY_LINES")
+LATITUDE = os.getenv("LATITUDE")
+LONGITUDE = os.getenv("LONGITUDE")
+
+print("\n=== Settings Loaded ===")
+print(f"WiFi SSID: {secrets['ssid']}")
+print(f"Adafruit IO: {'SET' if secrets['aio_username'] else 'NOT SET!'}")
+print(f"Timezone: {secrets['timezone']}")
+print(f"Default Direction: {DEFAULT_DIRECTION}")
+print(f"Transit URL: {TRANSIT_URL}")
+print(f"API Key: {'SET' if API_KEY else 'NOT SET!'}")
+print(f"Station IDs: {STATION_IDS}")
+print(f"Subway Lines: {SUBWAY_LINES}")
+print(f"Location: {LATITUDE}, {LONGITUDE}")
+
+# Validate settings
+missing = []
+if not secrets["ssid"]: missing.append("CIRCUITPY_WIFI_SSID")
+if not secrets["password"]: missing.append("CIRCUITPY_WIFI_PASSWORD")
+if not secrets["aio_username"]: missing.append("ADAFRUIT_AIO_USERNAME")
+if not secrets["aio_key"]: missing.append("ADAFRUIT_AIO_KEY")
+if not TRANSIT_URL: missing.append("TRANSIT_URL")
+if not API_KEY: missing.append("API_KEY")
+if not STATION_IDS: missing.append("STATION_IDS")
+if not SUBWAY_LINES: missing.append("SUBWAY_LINES")
+
+if missing:
+    print(f"\n*** ERROR: Missing settings: {', '.join(missing)}")
+    print("*** Check your settings.toml file!")
+if API_KEY == "your-api-key":
+    print("\n*** WARNING: API_KEY is still set to placeholder value!")
+print("=" * 25)
 
 keys = keypad.Keys((board.BUTTON_UP,board.BUTTON_DOWN), value_when_pressed=False, pull=True)
 
 # --- Display setup ---
 matrix = Matrix()
 display = matrix.display
-network = Network(status_neopixel=board.NEOPIXEL, debug=False)
+
+network = Network(status_neopixel=board.NEOPIXEL, debug=DEBUG)
+
+def is_wifi_connected():
+    """Check WiFi connection - works on M4 (ESP32SPI) and S3 (native wifi)."""
+    if _USE_NATIVE_WIFI:
+        return wifi.radio.connected
+    try:
+        return network._wifi.esp.is_connected
+    except:
+        return False
 
 # --- Drawing setup ---
 root_group = displayio.Group()  # Create a Group
@@ -172,7 +230,9 @@ if not DEBUG:
     small_font = bitmap_font.load_font("fonts/helvR10.bdf")
     arrival_board_font = bitmap_font.load_font("fonts/helv-9.bdf")
 else:
-    font = terminalio.FONT
+    large_font = terminalio.FONT
+    small_font = terminalio.FONT
+    arrival_board_font = terminalio.FONT
 
 clock_label = Label(large_font, anchor_point=(0.5,0.5), anchored_position=(44, 7))
 
@@ -216,96 +276,25 @@ arrivals_south_label = Label(font=arrival_board_font,
                                  anchored_position=(40,0),
                                  background_tight=True)
 
-class Atmosphere:
-    def __init__(self):
-        self.atmos_data = {"current_temp" : 0,
-                           "high_temp" : 0,
-                           "low_temp" : 0,
-                           "feels_temp" : 0,
-                           "aqi" : 0}
-        self.latitude = secrets["latitude"]
-        self.longitude = secrets["longitude"]
-        self.openweather_key = secrets["openweather_key"]
-        self.aqi_key = secrets["iqair_key"]
-        self.openweather_url = f"https://api.openweathermap.org/data/2.5/weather?lat={self.latitude}&lon={self.longitude}&appid={self.openweather_key}&units=imperial"
-        self.iqair_url = f"http://api.airvisual.com/v2/nearest_city?lat={self.latitude}&lon={self.longitude}&key={self.aqi_key}"
-
-    def weather_api(self):
-        try:
-            weather = network.fetch_data(self.openweather_url, json_path=[])
-            if DEBUG:
-                print("\n=== Calling Weather API ===")
-                print(f"URL: {self.openweather_url}")
-                print("Weather Data Retrieved:")
-                print(weather)
-        except Exception as e:
-            if DEBUG:
-                print("Weather api call error: ", e)
-            return None
-
-        self.atmos_data["current_temp"] = round(weather['main']['temp'])
-        self.atmos_data["high_temp"] = round(weather['main']['temp_max'])
-        self.atmos_data["low_temp"] = round(weather['main']['temp_min'])
-        self.atmos_data["feels_temp"] = round(weather['main']['feels_like'])
-
-    def aqi_api(self):
-        try:
-            aqi = network.fetch_data(self.iqair_url, json_path=["data", "current", "pollution"])
-            if DEBUG:
-                print("\n=== Calling AQI API ===")
-                print(f"URL: {self.iqair_url}")
-                print("AQI Data Retrieved:")
-                print(aqi)
-        except Exception as e:
-            if DEBUG:
-                print("AQI api call error: ", e)
-            return None
-
-        self.atmos_data["aqi"] = aqi["aqius"]
-
-    def update_display(self):
-        if self.atmos_data is None:
-            weather_label.text = "e" + "°"
-            aqi_label.text = "e"
-            aqi_lvl[0] = 0
-            return
-
-        weather_label.text = "{temp}°".format(temp=self.atmos_data["current_temp"])  #pick what value you want displayed from atmos_data
-
-        if self.atmos_data["aqi"] < 10:
-            aqi_label.text = " {aqi}".format(aqi=self.atmos_data["aqi"])
-        else:
-            aqi_label.text = str(self.atmos_data["aqi"])
-
-        weather_label.color = color[4]
-        aqi_label.color = color[4]
-
-        aqi_num = self.atmos_data["aqi"]
-        if aqi_num <= 50:
-            aqi_lvl[0] = 1
-        elif aqi_num > 50 and aqi_num <= 100:
-            aqi_lvl[0] = 2
-        elif aqi_num > 100 and aqi_num <= 150:
-            aqi_lvl[0] = 3
-        elif aqi_num > 150 and aqi_num <= 200:
-            aqi_lvl[0] = 4
-        elif aqi_num > 200 and aqi_num <= 300:
-            aqi_lvl[0] = 5
-        elif aqi_num > 300:
-            aqi_lvl[0] = 6
-
-
 class Arrivals:
     def __init__(self):
-        self.url = secrets["transit_url"]
-        self.headers = secrets["transit_headers"]  # {'api-key': api_key, 'user-station': "", (optional) 'user-station-ids': "", 'subway-lines': ""}
+        self.url = TRANSIT_URL
+        self.headers = {
+            "api-key": API_KEY,
+            "station-ids": STATION_IDS,
+            "subway-lines": SUBWAY_LINES,
+            "latitude": LATITUDE,
+            "longitude": LONGITUDE,
+            "Connection": "close",  # Fix for CircuitPython SSL issue
+        }
         self.arrow_refresh = None
         self.default_rows = 2
         self.prev_time = -1
         self.alert_flash = False
         self.directions = ["North", "South"]
         self.no_service_board = "No\nSer\nvice\n"
-        self.default_direction = secrets['default_direction']
+        self.default_direction = DEFAULT_DIRECTION
+        self.weather = {"temp_f": 0, "aqi": 0, "aqi_level": 0}
         self.arrivals_queue = [
                             {"Line" : None,
                              "Arrival" : 0,
@@ -333,27 +322,62 @@ class Arrivals:
             mta_bullets[0,row] = bullet_index["MTA"]
 
     def api_call(self):
-        if DEBUG:
-            print("\n=== Calling MTA Arrivals API ===")
-            print(f"URL: {self.url}")
-            print(f"Headers: {self.headers}")
+        print("\n=== Calling Arrivals API ===")
 
-        try:
-            arrival_data = network.fetch_data(self.url, json_path=[], headers=self.headers)
-            if DEBUG:
-                print("API Call Successful!")
-                print("Raw API Response:")
-                print(arrival_data)
-
-        except Exception as e:
-            if DEBUG:
-                print("Arrival API call error:", e)
+        if not self.url:
+            print("ERROR: TRANSIT_URL is not set!")
             return None
 
-        return arrival_data
+        response = None
+        try:
+            gc.collect()  # Free memory before request
+            
+            # Reset ESP32 before request to clear SSL state
+            try:
+                network._wifi.esp.reset()
+                network.connect()
+            except:
+                pass
+            
+            response = network.requests.get(self.url, headers=self.headers)
+            
+            if response.status_code != 200:
+                print(f"API error: {response.status_code}")
+                return None
+            
+            data = response.json()
+            print("API OK")
+
+            # Extract weather/AQI from unified response
+            if data.get("weather"):
+                self.weather["temp_f"] = data["weather"].get("temp_f", 0)
+            if data.get("aqi"):
+                self.weather["aqi"] = data["aqi"].get("value", 0)
+                self.weather["aqi_level"] = data["aqi"].get("level", 0)
+
+            return data
+
+        except Exception as e:
+            print(f"API ERROR: {type(e).__name__}: {e}")
+            return None
+        finally:
+            if response:
+                response.close()
+
+    def update_weather_display(self):
+        temp = self.weather["temp_f"]
+        aqi_val = self.weather["aqi"]
+        aqi_level = self.weather["aqi_level"]
+
+        weather_label.text = f"{temp}°"
+        weather_label.color = color[4]
+
+        aqi_label.text = f" {aqi_val}" if aqi_val < 10 else str(aqi_val)
+        aqi_label.color = color[4]
+        aqi_lvl[0] = aqi_level
 
     def update_board(self, arrival_data):
-        if not wifi.radio.connected:
+        if not is_wifi_connected():
             self.wifi_lost_message()
             
             return
@@ -430,7 +454,7 @@ class Arrivals:
         arrivals_south_arrow.y = -39
 
     def update_display(self, arrival_data, bullet_alert_flag, now):
-        if not wifi.radio.connected:
+        if not is_wifi_connected():
             self.wifi_lost_message()
             return
         
@@ -545,10 +569,7 @@ def change_screen():
     arrivals_group.hidden = not arrivals_group.hidden
 
 clock_check = None
-weather_refresh = None
-aqi_refresh = None
 subway_refresh = None
-alert_refresh = None
 bullet_alert_flag = True
 return_to_default = None
 displayed_alert_text = " "
@@ -557,7 +578,6 @@ api_fails = 0
 
 update_time(show_colon=True)  # Display whatever time is on the board
 arrivals = Arrivals()
-atmosphere = Atmosphere()
 
 default_group = displayio.Group()
 arrivals_group = displayio.Group()
@@ -600,22 +620,6 @@ while True:
             print("CLOCK UPDATE ERROR:", e)
 
         clock_check = time.monotonic()
-
-    if weather_refresh is None or time.monotonic() > weather_refresh + 600:
-        try:
-            atmosphere.weather_api()
-        except Exception as e:
-            print("WEATHER API ERROR:", e)
-
-        weather_refresh = time.monotonic()
-
-    if aqi_refresh is None or time.monotonic() > aqi_refresh + 900:
-        try:
-            atmosphere.aqi_api()
-        except Exception as e:
-            print("AQI API ERROR:", e)
-
-        aqi_refresh = time.monotonic()
 
     if subway_refresh is None or time.monotonic() > subway_refresh + 12:
         if not arrivals_group.hidden:
@@ -669,6 +673,6 @@ while True:
     if not default_group.hidden:
         arrivals.update_display(arrival_data, bullet_alert_flag, now=time.monotonic())
         update_time()
-        atmosphere.update_display()
+        arrivals.update_weather_display()
 
     time.sleep(0.5)
