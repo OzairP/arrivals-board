@@ -68,7 +68,6 @@ secrets = {
 }
 
 # App settings
-DEFAULT_DIRECTION = os.getenv("DEFAULT_DIRECTION", "North")
 TRANSIT_URL = os.getenv("TRANSIT_URL")
 API_KEY = os.getenv("API_KEY")
 STATION_IDS = os.getenv("STATION_IDS")
@@ -80,7 +79,6 @@ print("\n=== Settings Loaded ===")
 print(f"WiFi SSID: {secrets['ssid']}")
 print(f"Adafruit IO: {'SET' if secrets['aio_username'] else 'NOT SET!'}")
 print(f"Timezone: {secrets['timezone']}")
-print(f"Default Direction: {DEFAULT_DIRECTION}")
 print(f"Transit URL: {TRANSIT_URL}")
 print(f"API Key: {'SET' if API_KEY else 'NOT SET!'}")
 print(f"Station IDs: {STATION_IDS}")
@@ -293,7 +291,6 @@ class Arrivals:
         self.alert_flash = False
         self.directions = ["North", "South"]
         self.no_service_board = "No\nSer\nvice\n"
-        self.default_direction = DEFAULT_DIRECTION
         self.weather = {"temp_f": 0, "aqi": 0, "aqi_level": 0}
         self.arrivals_queue = [
                             {"Line" : None,
@@ -396,14 +393,15 @@ class Arrivals:
             arrival_board_times = ""
 
             if rows == 0:
-                arrivals_north_label.text = self.no_service_board
-                arrivals_south_label.text = self.no_service_board
-                for i in range(4):
-                    if direction == "North":
+                # Only set the direction that is empty; leave the other untouched
+                if direction == "North":
+                    arrivals_north_label.text = self.no_service_board
+                    for i in range(4):
                         arrivals_north_bullets[0,i] = bullet_index["MTA"]
-                    else:
+                else:
+                    arrivals_south_label.text = self.no_service_board
+                    for i in range(4):
                         arrivals_south_bullets[0,i] = bullet_index["MTA"]
-
                 continue
 
             for i in range(rows):
@@ -465,26 +463,48 @@ class Arrivals:
                 mta_bullets[0,row] = bullet_index["MTA"]
             return
 
-        if not arrival_data[self.default_direction]:
-            for row in range(2):
-                mta_bullets[0,row] = bullet_index["MTA"]
-            arrival_label_1.text = "No"
-            arrival_label_2.text = "Service"
-            return
-
         affected_lines = [alert[0] for alert in arrival_data["alerts"]]
-        rows = min(self.default_rows, len(arrival_data[self.default_direction]))
         
-        for i in range(rows):
-            self.arrivals_queue[i]["Line"] = arrival_data[self.default_direction][i]["Line"]
-            self.arrivals_queue[i]["Arrival"] = arrival_data[self.default_direction][i]["Arrival"]
-            self.arrivals_queue[i]["FLASH"] = self.alert_flash
-            self.arrivals_queue[i]["PREV_TIME"] = self.prev_time
-            self.arrivals_queue[i]["ALERT"] = False
-            if self.arrivals_queue[i]["Line"] in affected_lines:
-                self.arrivals_queue[i]["ALERT"] = True
+        # Row 0: North, Row 1: South
+        north_arrivals = arrival_data.get("North", [])
+        south_arrivals = arrival_data.get("South", [])
+        
+        # Prepare North arrival (row 0)
+        if north_arrivals:
+            self.arrivals_queue[0]["Line"] = north_arrivals[0]["Line"]
+            self.arrivals_queue[0]["Arrival"] = north_arrivals[0]["Arrival"]
+            self.arrivals_queue[0]["ALERT"] = self.arrivals_queue[0]["Line"] in affected_lines
+        else:
+            self.arrivals_queue[0]["Line"] = None
+            self.arrivals_queue[0]["Arrival"] = None
+            self.arrivals_queue[0]["ALERT"] = False
+        
+        self.arrivals_queue[0]["FLASH"] = self.alert_flash
+        self.arrivals_queue[0]["PREV_TIME"] = self.prev_time
+        
+        # Prepare South arrival (row 1)
+        if south_arrivals:
+            self.arrivals_queue[1]["Line"] = south_arrivals[0]["Line"]
+            self.arrivals_queue[1]["Arrival"] = south_arrivals[0]["Arrival"]
+            self.arrivals_queue[1]["ALERT"] = self.arrivals_queue[1]["Line"] in affected_lines
+        else:
+            self.arrivals_queue[1]["Line"] = None
+            self.arrivals_queue[1]["Arrival"] = None
+            self.arrivals_queue[1]["ALERT"] = False
+        
+        self.arrivals_queue[1]["FLASH"] = self.alert_flash
+        self.arrivals_queue[1]["PREV_TIME"] = self.prev_time
 
         for row, train in enumerate(self.arrivals_queue):
+            if train["Line"] is None:
+                # No service for this direction
+                if row == 0:
+                    arrival_label_1.text = "No"
+                elif row == 1:
+                    arrival_label_2.text = "Service"
+                mta_bullets[0,row] = bullet_index["MTA"]
+                continue
+            
             arrival_time = train["Arrival"]
             if arrival_time == 0:
                 arrival_time = "Due"
@@ -493,12 +513,12 @@ class Arrivals:
 
             if row == 0:
                 arrival_label_1.text = arrival_time
-
             elif row == 1:
                 arrival_label_2.text = arrival_time
 
             if DEBUG:
-                print(f"Row {row+1} → Line: {train['Line']} | Arrival: {train['Arrival']} min | Alert: {train['ALERT']}")
+                direction = "North" if row == 0 else "South"
+                print(f"{direction} → Line: {train['Line']} | Arrival: {train['Arrival']} min | Alert: {train['ALERT']}")
 
             if train["ALERT"] is True and bullet_alert_flag is True:
                 if train["FLASH"]:
@@ -514,10 +534,6 @@ class Arrivals:
                         self.alert_flash = True
             else:
                 mta_bullets[0,row] = bullet_index[train["Line"]]
-
-        if rows == 1:
-            mta_bullets[0,1] = bullet_index["MTA"]
-            arrival_label_2.text = "-1"
 
     def alert_text(self, arrival_data):
         if arrival_data is None or arrival_data["alerts"] == []:

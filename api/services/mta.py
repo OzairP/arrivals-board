@@ -68,7 +68,15 @@ def _parse_arrivals(
             continue
 
         for stop_update in trip.stop_time_update:
-            if stop_update.stop_id not in station_ids:
+            stop_id = stop_update.stop_id
+            
+            # Match exact stop_id or base station (e.g., "L06" matches "L06N" and "L06S")
+            matches = (
+                stop_id in station_ids
+                or (len(stop_id) > 1 and stop_id[:-1] in station_ids)
+            )
+            
+            if not matches:
                 continue
 
             arrival_time = stop_update.arrival.time
@@ -82,10 +90,14 @@ def _parse_arrivals(
             terminal_stop_id = trip.stop_time_update[-1].stop_id
             terminal_name = MTA_STATIONS.get(terminal_stop_id, "Unknown")
 
+            # Extract direction from stop_id suffix (N/S)
+            # MTA stop_ids end with N or S (e.g., "L06N", "L06S")
+            direction = stop_id[-1] if stop_id[-1] in ("N", "S") else "N"
+            
             arrivals.append(
                 Arrival(
                     line=route_id,
-                    direction=stop_update.stop_id[-1],  # "N" or "S"
+                    direction=direction,
                     terminal=terminal_name,
                     minutes=0 if minutes < 1 else round(minutes),
                 )

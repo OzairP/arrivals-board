@@ -13,9 +13,6 @@ ADAFRUIT_AIO_KEY = "your_adafruit_io_key"
 # Timezone (http://worldtimeapi.org/timezones)
 CIRCUITPY_WEB_API_TIMEZONE = "America/New_York"
 
-# Display settings
-DEFAULT_DIRECTION = "North"  # "North" or "South"
-
 # API settings
 TRANSIT_URL = "https://mta-arrivals-api.fly.dev/api/mta/arrivals"
 API_KEY = "your-api-key"
